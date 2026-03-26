@@ -31,7 +31,7 @@ pub struct MyConfiguration {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub MyData {	
+pub struct MyData {
   value: i32,
 }
 ```

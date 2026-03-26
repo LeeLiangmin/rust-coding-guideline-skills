@@ -1,7 +1,8 @@
 # Rust Coding Guidelines Skills 架构设计
 
 > 基于 [idea.md](../idea.md) 的设计构想，构建一套 **静态工具 + LLM 辅助检测** 的 Rust 编程规范检查 Skills 体系。
-> 重构后采用统一的 [`coding-guidelines-audit`](../skills/coding-guidelines-audit/SKILL.md) Skill，支持全量/定向两种模式，具备中间产物持久化和断点续审能力。
+> 采用统一的 [`coding-guidelines-audit`](../skills/coding-guidelines-audit/SKILL.md) Skill，支持全量/定向两种模式，具备中间产物持久化和断点续审能力。
+> 重新设计方案详见 [redesign-plan.md](redesign-plan.md)。
 
 ---
 
@@ -9,15 +10,31 @@
 
 ### 1.1 核心理念
 
-将 57 条 Rust 编程规范分为三层处理：
+将 57 条 Rust 编程规范分为四层处理：
 
 | 层级 | 处理方式 | 条目数 | 说明 |
 |------|---------|--------|------|
-| **Tool 层** | `guidelines_runner` 静态检测 | 37 条 | 21 Clippy 原生 + 16 Fork 自定义 |
-| **LLM 层** | 大模型代码审查 | 9 条 | 工具无法覆盖的规则类条目 |
+| **clippy_native** | clippy 原生 lint 静态检测 | 21 条 | 有规范映射，默认启用 |
+| **clippy_custom** | 扩展工具自定义 lint 静态检测 | 16 条 | 有规范映射，需 `-W` 启用 |
+| **llm** | 大模型代码审查 | 9 条 | 工具无法覆盖的规则 |
 | **排除层** | 不检测 | 11 条 | 原则类条目，仅作参考 |
 
-### 1.2 工作流概览
+此外，clippy 运行时还会输出大量**无规范映射的默认 lint**（`clippy_default`），这些诊断也会被保留在报告中。
+
+### 1.2 四分类模型
+
+所有检查项按"检查来源"和"是否有规范映射"两个维度分为四类：
+
+| source 分类 | 含义 | 有 guideline_code | 检查方式 | 需要 -W 启用 |
+|------------|------|-------------------|---------|-------------|
+| `clippy_default` | clippy 默认 lint，无规范映射 | ❌ 留空 | 工具自动检出 | ❌ |
+| `clippy_native` | clippy 原生 lint，有规范映射 | ✅ | 工具自动检出 | ❌ |
+| `clippy_custom` | 扩展工具自定义 lint，有规范映射 | ✅ | 工具检出，需 -W 启用 | ✅ |
+| `llm` | 工具无法检查，LLM 审查 | ✅ | LLM 代码审查 | — |
+
+> `clippy_default` 不在注册表中注册（800+ lint 太多），运行时从 clippy 输出中动态识别。
+
+### 1.3 工作流概览
 
 ```mermaid
 flowchart TD
@@ -34,21 +51,30 @@ flowchart TD
 
     C --> C1{用户指定了规则编号?}
     C1 -->|否: full 模式| C2[加载全部 46 条规则]
-    C1 -->|是: specific 模式| C3[解析编号 → 路由分类]
+    C1 -->|是: specific 模式| C3[解析编号 - 按 check_type 分组]
     C2 --> D
     C3 --> D
 
-    D[步骤 2: Tool 层检测] --> D1[执行 guidelines_runner]
-    D1 --> D2[解析 + 映射 source 和 guideline_code]
-    D2 --> D3[写入 tool-results.json]
+    D[步骤 2: Clippy 检测] --> D1[执行 guidelines_runner]
+    D1 --> D2[解析输出]
+    D2 --> D3{每条诊断的 lint_code}
 
-    D3 --> E[步骤 3: LLM 层检测]
-    E --> E1[预过滤 → 分批审查 → 进度追踪]
+    D3 --> D4{在 registry 中查找}
+    D4 -->|找到 clippy_native| D5[source=clippy_native + guideline_code]
+    D4 -->|找到 clippy_custom| D6[source=clippy_custom + guideline_code]
+    D4 -->|未找到| D7[source=clippy_default + guideline_code 留空]
+
+    D5 --> D8[写入 tool-results.json]
+    D6 --> D8
+    D7 --> D8
+
+    D8 --> E[步骤 3: LLM 检测]
+    E --> E1[预过滤 - 分批审查 - 进度追踪]
     E1 --> E2[每批完成后更新 llm-progress.json]
 
     E2 --> F[步骤 4: 结果合并]
     F --> F1[从 tool-results.json + llm-progress.json 读取]
-    F1 --> F2[合并 + 统计 + 写入 report.json]
+    F1 --> F2[合并 + 统计 by_source 四分类 + 写入 report.json]
 ```
 
 ---
@@ -61,11 +87,11 @@ flowchart TD
 guideline-skills/
 ├── skills/
 │   └── coding-guidelines-audit/          # 统一的审计 Skill
-│       ├── SKILL.md                      # Skill 定义（~260 行）
+│       ├── SKILL.md                      # Skill 定义
 │       ├── assets/
-│       │   ├── tool_handle.json          # 37 条静态工具路由表
-│       │   ├── llm_handle.json           # 9 条 LLM 检测路由表
-│       │   └── output_schema.json        # 统一输出 schema
+│       │   ├── guidelines_registry.json  # 46 条规范统一注册表
+│       │   ├── llm_check_config.json     # 9 条 LLM 检查配置
+│       │   └── output_schema.json        # 统一输出 schema（四分类）
 │       └── refs/
 │           ├── rust_coding_guidelines.md # 完整 Rust 编程规范文档
 │           ├── G.CMT.02.md              # 文件头注释应包含版权说明
@@ -79,7 +105,7 @@ guideline-skills/
 │           └── G.TYP.SCT.01.md          # 自定义类型宜实现常见 trait
 ├── plans/
 │   ├── architecture.md                  # 本文档
-│   ├── refactor-plan.md                 # 重构计划
+│   ├── redesign-plan.md                 # 重新设计方案
 │   └── data/                            # 参考数据
 └── idea.md                              # 原始构想
 ```
@@ -92,7 +118,7 @@ guideline-skills/
 <目标项目>/
 └── .guidelines-audit/
     ├── state.json            # 审计总状态（断点续审核心）
-    ├── tool-results.json     # Tool 层检测结果（步骤 2 产物）
+    ├── tool-results.json     # 工具层检测结果（步骤 2 产物）
     ├── llm-progress.json     # LLM 层检查进度和中间结果（步骤 3 产物）
     └── report.json           # 最终审计报告（步骤 4 产物）
 ```
@@ -103,47 +129,64 @@ guideline-skills/
 
 ## 3. 路由表设计
 
-### 3.1 tool_handle.json
+### 3.1 guidelines_registry.json — 统一规范注册表
 
-静态工具路由表（[`assets/tool_handle.json`](../skills/coding-guidelines-audit/assets/tool_handle.json)），包含 37 条可由 `guidelines_runner` 检测的规则。
-
-**字段说明：**
-
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `guideline_code` | string | 规范编号，如 `G.NAM.01` |
-| `title` | string | 规范标题 |
-| `level` | string | 级别：`requirement` / `suggestion` |
-| `source` | string | 实现来源：`clippy_native` / `fork_custom` |
-| `lint_codes` | string[] | 对应的 clippy/rustc lint 代码列表 |
-| `handler` | string | 固定为 `"tool"` |
-
-`source` 字段用于映射到最终报告的诊断来源（详见 [第 10 节](#10-诊断来源source三分类设计)）。
-
-### 3.2 llm_handle.json
-
-LLM 处理路由表（[`assets/llm_handle.json`](../skills/coding-guidelines-audit/assets/llm_handle.json)），包含 9 条需要大模型检测的规则。
+[`assets/guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json) 是所有 46 条规范条目的**唯一注册中心**。
 
 **字段说明：**
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `guideline_code` | string | 规范编号 |
+| `guideline_code` | string | 规范编号，如 `G.NAM.01`（唯一标识） |
 | `title` | string | 规范标题 |
 | `level` | string | 级别：`requirement` / `suggestion` |
-| `difficulty` | string | 检测难度：`low` / `medium` / `high` |
-| `handler` | string | 固定为 `"llm"` |
+| `check_type` | string | 检查方式：`clippy_native` / `clippy_custom` / `llm` |
+| `lint_codes` | string[] | 对应的 clippy/rustc lint 代码列表（`llm` 类型为空数组） |
+
+> **注意**：`clippy_default` 不在此表中注册，因为它们没有规范映射，是运行时从 clippy 输出中动态识别的。
+
+### 3.2 llm_check_config.json — LLM 检查配置
+
+[`assets/llm_check_config.json`](../skills/coding-guidelines-audit/assets/llm_check_config.json) 仅包含 `check_type = "llm"` 的规则的检查参数。
+
+**字段说明：**
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `guideline_code` | string | 规范编号（引用 registry 中的条目） |
 | `ref_file` | string | 参考规范文件的相对路径 |
+| `difficulty` | string | 检测难度：`low` / `medium` / `high` |
 | `check_strategy` | string | 检查策略标识 |
 | `check_description` | string | 给 LLM 的检查指令描述 |
-| `audit_focus` | string | **一句话审查聚焦点**（新增） |
+| `audit_focus` | string | 一句话审查聚焦点 |
 | `pre_filter` | object | 预过滤配置（`type` + 类型特定参数） |
 | `batch_size` | integer | 每批审查的文件数 |
 
-**`audit_focus` 字段**为重构新增，提供一句话描述审查聚焦点，例如：
-```json
-{ "audit_focus": "文件头部是否包含版权声明注释" }
+### 3.3 两表关系
+
+```mermaid
+erDiagram
+    GUIDELINES_REGISTRY {
+        string guideline_code PK
+        string title
+        string level
+        string check_type
+        array lint_codes
+    }
+    LLM_CHECK_CONFIG {
+        string guideline_code FK
+        string ref_file
+        string difficulty
+        string check_strategy
+        string check_description
+        string audit_focus
+        object pre_filter
+        int batch_size
+    }
+    GUIDELINES_REGISTRY ||--o| LLM_CHECK_CONFIG : "check_type=llm 时关联"
 ```
+
+> `llm_check_config.json` 中的 `guideline_code` 必须在 `guidelines_registry.json` 中存在且 `check_type = "llm"`。这是一个**引用关系**，不是重复定义。
 
 **`pre_filter` 类型说明：**
 
@@ -173,18 +216,19 @@ LLM 处理路由表（[`assets/llm_handle.json`](../skills/coding-guidelines-aud
 
 ```json
 {
-  "total": 30,
+  "total": 38,
   "errors": 2,
-  "warnings": 28,
+  "warnings": 36,
   "by_source": {
-    "tool_native": 15,
-    "tool_custom": 10,
+    "clippy_default": 15,
+    "clippy_native": 8,
+    "clippy_custom": 10,
     "llm": 5
   }
 }
 ```
 
-使用 `by_source` 对象按三种诊断来源分类统计，替代旧版的 `tool_diagnostics` / `llm_diagnostics` 扁平字段。
+使用 `by_source` 对象按四种诊断来源分类统计。
 
 ### 4.3 diagnostics 条目
 
@@ -192,13 +236,13 @@ LLM 处理路由表（[`assets/llm_handle.json`](../skills/coding-guidelines-aud
 |------|------|------|------|
 | `level` | `"error"` \| `"warning"` \| `"note"` | ✅ | 诊断级别 |
 | `code` | string | ✅ | lint 代码，如 `clippy::collapsible_if` |
-| `guideline_code` | string | | 对应的规范编号，如 `G.NAM.01`（未映射时留空） |
-| `source` | `"tool_native"` \| `"tool_custom"` \| `"llm"` | ✅ | 诊断来源 |
+| `guideline_code` | string | | 对应的规范编号，如 `G.NAM.01`（`clippy_default` 留空） |
+| `source` | `"clippy_default"` \| `"clippy_native"` \| `"clippy_custom"` \| `"llm"` | ✅ | 诊断来源四分类 |
 | `message` | string | ✅ | 诊断消息 |
 | `file` | string | ✅ | 文件相对路径 |
 | `line` | integer | ✅ | 行号 |
 | `column` | integer | | 列号 |
-| `rendered` | string | | 格式化的完整诊断输出（主要用于 tool 来源） |
+| `rendered` | string | | 格式化的完整诊断输出（主要用于 clippy 来源） |
 | `suggestions` | array | | 修复建议 |
 
 ---
@@ -218,17 +262,21 @@ LLM 处理路由表（[`assets/llm_handle.json`](../skills/coding-guidelines-aud
 
 **模式判断**：用户提供规则编号 → `specific` 模式；未提供 → `full` 模式。
 
-- **specific 模式**：解析编号，在 [`tool_handle.json`](../skills/coding-guidelines-audit/assets/tool_handle.json) 和 [`llm_handle.json`](../skills/coding-guidelines-audit/assets/llm_handle.json) 中查找，分为 `tool_group` 和 `llm_group`
-- **full 模式**：`tool_group` = 全部 37 条，`llm_group` = 全部 9 条
+- **specific 模式**：解析编号，在 [`guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json) 中查找，按 `check_type` 分为 `tool_group`（clippy_native + clippy_custom）和 `llm_group`
+- **full 模式**：`tool_group` = 全部 37 条工具规则，`llm_group` = 全部 9 条 LLM 规则，同时包含所有 clippy 默认 lint
 - 验证 `guidelines_runner` 工具链和 MCP Server 可用性
 
 📝 产物：创建 `.guidelines-audit/state.json`
 
-### 步骤 2: Tool 层检测
+### 步骤 2: Clippy 检测（工具层）
 
 1. **执行检测**：MCP 优先（`check_project`），CLI 回退（`cargo +guidelines_runner clippy --message-format=json`）
-2. **输出解析**：筛选 `compiler-message`，提取诊断信息
-3. **source 映射**：查 [`tool_handle.json`](../skills/coding-guidelines-audit/assets/tool_handle.json)，`clippy_native` → `tool_native`，`fork_custom` → `tool_custom`；未映射的标准 clippy lint 保留为 `tool_native`，`guideline_code` 留空
+   - `clippy_custom` 类 lint 需通过 `-W` 参数显式启用
+2. **输出解析**：筛选 `compiler-message`，提取诊断信息和 suggestions
+3. **source 四分类映射**：查 [`guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json)：
+   - 找到且 `check_type = clippy_native` → `source = "clippy_native"` + `guideline_code`
+   - 找到且 `check_type = clippy_custom` → `source = "clippy_custom"` + `guideline_code`
+   - 未找到 → `source = "clippy_default"` + `guideline_code` 留空
 
 📝 产物：写入 `.guidelines-audit/tool-results.json`，更新 `state.json`
 
@@ -236,13 +284,14 @@ LLM 处理路由表（[`assets/llm_handle.json`](../skills/coding-guidelines-aud
 
 采用 **"预过滤 → 分批审查 → 进度追踪"** 三阶段策略：
 
-1. **预过滤**：按 [`llm_handle.json`](../skills/coding-guidelines-audit/assets/llm_handle.json) 中的 `pre_filter` 配置缩小审查范围
+1. **预过滤**：按 [`llm_check_config.json`](../skills/coding-guidelines-audit/assets/llm_check_config.json) 中的 `pre_filter` 配置缩小审查范围
 2. **分批审查**：每批单规则 + 对应 [`refs/G.XXX.md`](../skills/coding-guidelines-audit/refs/) 参考文件，`batch_size` 由配置控制
 3. **进度追踪**：维护 `文件 × 规则` 检查矩阵，确保全覆盖
 
 ```mermaid
 flowchart TD
-    A[加载 llm_handle.json] --> B[扫描项目 .rs 文件]
+    A[从 registry 筛选 check_type=llm] --> A1[加载 llm_check_config.json]
+    A1 --> B[扫描项目 .rs 文件]
     B --> C[初始化检查矩阵]
     C --> D{还有未完成的规则?}
     D -->|否| E[LLM 层检测完成]
@@ -252,7 +301,7 @@ flowchart TD
     H -->|否| I[该规则完成]
     H -->|是| J[取一批文件]
     J --> K[加载 refs/G.XXX.md + 构建 prompt]
-    K --> L[LLM 审查 → 解析输出]
+    K --> L[LLM 审查 - 解析输出]
     L --> M[更新 llm-progress.json]
     M --> H
     I --> D
@@ -266,7 +315,7 @@ flowchart TD
 
 1. 从 `tool-results.json` 和 `llm-progress.json` 读取诊断
 2. 合并为统一 `diagnostics` 数组
-3. 计算 `summary`（含 `by_source` 分类统计）
+3. 计算 `summary`（含 `by_source` 四分类统计）
 4. 写入最终报告
 
 📝 产物：写入 `.guidelines-audit/report.json`，更新 `state.json`
@@ -340,62 +389,63 @@ requirement / suggestion
 
 ## 8. 规则覆盖总览
 
-| 分类 | 条目数 | 处理方式 | 路由表 |
-|------|--------|---------|--------|
-| 🟢 Clippy 原生规则 | 21 | `guidelines_runner` 静态检测 | [`tool_handle.json`](../skills/coding-guidelines-audit/assets/tool_handle.json) |
-| 🔵 Fork 自定义规则 | 16 | `guidelines_runner` 静态检测 | [`tool_handle.json`](../skills/coding-guidelines-audit/assets/tool_handle.json) |
-| 🔴 未实现规则 | 9 | LLM 代码审查 | [`llm_handle.json`](../skills/coding-guidelines-audit/assets/llm_handle.json) |
+| 分类 | 条目数 | 处理方式 | 数据来源 |
+|------|--------|---------|---------|
+| 🟢 clippy_native | 21 | clippy 原生 lint 静态检测 | [`guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json) |
+| 🔵 clippy_custom | 16 | 扩展工具自定义 lint 静态检测 | [`guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json) |
+| 🔴 llm | 9 | LLM 代码审查 | [`guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json) + [`llm_check_config.json`](../skills/coding-guidelines-audit/assets/llm_check_config.json) |
 | ⚪ 原则类条目 | 11 | 不检测 | 无 |
-| **合计** | **57** | — | — |
+| 🟡 clippy_default | 800+ | clippy 默认 lint（无规范映射） | 运行时动态识别 |
+| **规范合计** | **57** | — | — |
 
 ---
 
 ## 9. 维护指南
 
-### 9.1 已完成的实施阶段
+### 9.1 日常维护事项
 
-| 阶段 | 内容 | 状态 |
-|------|------|------|
-| Phase 1 | 创建 `coding-guidelines-audit/` 目录和数据文件 | ✅ 完成 |
-| Phase 2 | 编写统一 SKILL.md（~260 行） | ✅ 完成 |
-| Phase 3 | 清理旧目录（`full-audit/`、`rule-audit/`、`audit/`） | ✅ 完成 |
-| Phase 4 | 更新架构文档 | ✅ 完成 |
-
-### 9.2 日常维护事项
-
-- **新增 Tool 规则**：在 [`tool_handle.json`](../skills/coding-guidelines-audit/assets/tool_handle.json) 中添加条目，`source` 设为 `clippy_native` 或 `fork_custom`
-- **新增 LLM 规则**：在 [`llm_handle.json`](../skills/coding-guidelines-audit/assets/llm_handle.json) 中添加条目（含 `audit_focus`、`pre_filter`、`batch_size`），并创建对应的 `refs/G.XXX.md` 参考文件
+- **新增 clippy_native 规则**：在 [`guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json) 中添加条目，`check_type` 设为 `clippy_native`
+- **新增 clippy_custom 规则**：在 [`guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json) 中添加条目，`check_type` 设为 `clippy_custom`
+- **新增 LLM 规则**：
+  1. 在 [`guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json) 中添加条目，`check_type` 设为 `llm`
+  2. 在 [`llm_check_config.json`](../skills/coding-guidelines-audit/assets/llm_check_config.json) 中添加检查配置
+  3. 创建对应的 `refs/G.XXX.md` 参考文件
 - **修改输出格式**：更新 [`output_schema.json`](../skills/coding-guidelines-audit/assets/output_schema.json)，同步更新 SKILL.md 中的相关描述
 
 ---
 
-## 10. 诊断来源（source）三分类设计
+## 10. 诊断来源（source）四分类设计
 
 ### 10.1 分类体系
 
 | source 值 | 含义 | 来源 | guideline_code |
 |-----------|------|------|----------------|
-| `tool_native` | clippy 原生 lint | guidelines_runner 输出 | 有映射的填写，无映射的留空 |
-| `tool_custom` | fork 自定义 lint | guidelines_runner 输出 | 必有映射 |
-| `llm` | LLM 代码审查 | AI 审查结果 | 必有映射 |
+| `clippy_default` | clippy 默认 lint，无规范映射 | clippy 输出 | 留空 |
+| `clippy_native` | clippy 原生 lint，有规范映射 | clippy 输出 | 有映射 |
+| `clippy_custom` | 扩展工具自定义 lint，有规范映射 | clippy 输出（需 -W 启用） | 有映射 |
+| `llm` | LLM 代码审查 | AI 审查结果 | 有映射 |
 
 ### 10.2 映射逻辑
 
-对 `guidelines_runner` 输出的每条诊断：
+对 clippy 输出的每条诊断：
 
-1. 用 `lint_code` 在 [`tool_handle.json`](../skills/coding-guidelines-audit/assets/tool_handle.json) 中查找
-2. **找到**：
+1. 用 `lint_code` 在 [`guidelines_registry.json`](../skills/coding-guidelines-audit/assets/guidelines_registry.json) 中查找
+2. **找到且 check_type = clippy_native**：
    - `guideline_code` = 匹配规则的 `guideline_code`
-   - `source` = `clippy_native` → `"tool_native"` / `fork_custom` → `"tool_custom"`
-3. **未找到**（标准 clippy lint，不在 37 条映射表中）：
+   - `source` = `"clippy_native"`
+3. **找到且 check_type = clippy_custom**：
+   - `guideline_code` = 匹配规则的 `guideline_code`
+   - `source` = `"clippy_custom"`
+4. **未找到**（标准 clippy lint，不在注册表中）：
    - `guideline_code` = `""`（留空）
-   - `source` = `"tool_native"`
+   - `source` = `"clippy_default"`
 
 ### 10.3 设计考量
 
-- 三分类使报告消费者能区分 clippy 原生检测、fork 自定义检测和 LLM 检测的结果
-- `by_source` 统计对象替代旧版 `tool_diagnostics` / `llm_diagnostics`，具备更好的扩展性
-- 未映射的标准 clippy lint 统一归入 `tool_native`，保证不丢失任何诊断
+- 四分类使报告消费者能精确区分：无规范映射的 clippy 默认检测、有规范映射的 clippy 原生检测、扩展自定义检测和 LLM 检测
+- `by_source` 统计对象按四类分别计数，具备良好的扩展性
+- 未映射的标准 clippy lint 统一归入 `clippy_default`，保证不丢失任何诊断
+- `clippy_default` 不在注册表中注册，避免维护 800+ lint 条目的负担
 
 ---
 
@@ -414,7 +464,7 @@ requirement / suggestion
 
 ```json
 {
-  "version": "1.0",
+  "version": "2.0",
   "mode": "full",
   "projectPath": "/path/to/project",
   "startedAt": "2024-01-01T00:00:00Z",
@@ -436,9 +486,9 @@ requirement / suggestion
 
 步骤状态枚举：`pending` → `in_progress` → `completed` | `failed`
 
-### 11.3 tool-results.json — Tool 层检测结果
+### 11.3 tool-results.json — 工具层检测结果
 
-步骤 2 完成后写入，包含已解析、已映射的全部 Tool 诊断：
+步骤 2 完成后写入，包含已解析、已映射的全部工具诊断：
 
 ```json
 {
@@ -449,10 +499,22 @@ requirement / suggestion
       "level": "warning",
       "code": "clippy::wrong_self_convention",
       "guideline_code": "G.NAM.02",
-      "source": "tool_native",
+      "source": "clippy_native",
       "message": "methods called to_* usually take self by reference",
       "file": "src/lib.rs",
       "line": 42,
+      "column": 5,
+      "rendered": "...",
+      "suggestions": []
+    },
+    {
+      "level": "warning",
+      "code": "clippy::collapsible_if",
+      "guideline_code": "",
+      "source": "clippy_default",
+      "message": "this if statement can be collapsed",
+      "file": "src/main.rs",
+      "line": 74,
       "column": 5,
       "rendered": "...",
       "suggestions": []
@@ -477,7 +539,7 @@ requirement / suggestion
         "src/lib.rs": "checked",
         "src/utils.rs": "skipped"
       },
-      "diagnostics": [{ "..." : "..." }]
+      "diagnostics": [{ "...": "..." }]
     },
     "G.CTF.01": {
       "status": "in_progress",
@@ -515,7 +577,7 @@ flowchart TD
     H -->|重新开始| C
 
     I --> J{中断在哪个步骤?}
-    J -->|step2_tool| K[重新执行 Tool 层检测]
+    J -->|step2_tool| K[重新执行 Clippy 检测]
     J -->|step3_llm| L[读取 llm-progress.json, 跳过已完成规则/文件]
     J -->|step4_merge| M[读取中间产物, 直接合并]
 ```

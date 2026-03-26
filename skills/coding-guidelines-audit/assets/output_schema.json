@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Rust Guidelines Check Report",
   "type": "object",
-  "required": ["projectPath", "summary", "diagnostics"],
+  "required": ["projectPath", "checkMode", "checkedRules", "summary", "diagnostics"],
   "properties": {
     "projectPath": {
       "type": "string",
@@ -27,10 +27,11 @@
         "warnings": { "type": "integer", "description": "警告数" },
         "by_source": {
           "type": "object",
-          "description": "按诊断来源分类统计",
+          "description": "按诊断来源四分类统计",
           "properties": {
-            "tool_native": { "type": "integer", "description": "clippy 原生 lint 诊断数" },
-            "tool_custom": { "type": "integer", "description": "fork 自定义 lint 诊断数" },
+            "clippy_default": { "type": "integer", "description": "clippy 默认 lint 诊断数（无规范映射）" },
+            "clippy_native": { "type": "integer", "description": "clippy 原生 lint 诊断数（有规范映射）" },
+            "clippy_custom": { "type": "integer", "description": "clippy 扩展自定义 lint 诊断数（有规范映射）" },
             "llm": { "type": "integer", "description": "LLM 检测出的诊断数" }
           }
         }
@@ -40,7 +41,7 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["level", "code", "message", "file", "line"],
+        "required": ["level", "code", "message", "file", "line", "suggestions"],
         "properties": {
           "level": {
             "type": "string",
@@ -53,12 +54,12 @@
           },
           "guideline_code": {
             "type": "string",
-            "description": "对应的规范编号，如 G.NAM.01"
+            "description": "对应的规范编号，如 G.NAM.01；clippy_default 类留空"
           },
           "source": {
             "type": "string",
-            "enum": ["tool_native", "tool_custom", "llm"],
-            "description": "诊断来源：tool_native=clippy原生lint / tool_custom=fork自定义lint / llm=大模型"
+            "enum": ["clippy_default", "clippy_native", "clippy_custom", "llm"],
+            "description": "诊断来源四分类：clippy_default=clippy默认lint无规范映射 / clippy_native=clippy原生lint有规范映射 / clippy_custom=clippy扩展自定义lint / llm=大模型检测"
           },
           "message": {
             "type": "string",
@@ -78,7 +79,7 @@
           },
           "rendered": {
             "type": "string",
-            "description": "格式化的完整诊断输出（主要用于 tool 来源）"
+            "description": "格式化的完整诊断输出（主要用于 clippy 来源）"
           },
           "suggestions": {
             "type": "array",
