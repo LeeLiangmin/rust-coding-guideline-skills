@@ -1,0 +1,106 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Rust Guidelines Check Report",
+  "type": "object",
+  "required": ["projectPath", "summary", "diagnostics"],
+  "properties": {
+    "projectPath": {
+      "type": "string",
+      "description": "被检测项目的绝对路径"
+    },
+    "checkMode": {
+      "type": "string",
+      "enum": ["full", "specific"],
+      "description": "检测模式：full=全量 / specific=特定规则"
+    },
+    "checkedRules": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "本次检测涉及的规范编号列表"
+    },
+    "summary": {
+      "type": "object",
+      "required": ["total", "errors", "warnings"],
+      "properties": {
+        "total": { "type": "integer", "description": "诊断总数" },
+        "errors": { "type": "integer", "description": "错误数" },
+        "warnings": { "type": "integer", "description": "警告数" },
+        "by_source": {
+          "type": "object",
+          "description": "按诊断来源分类统计",
+          "properties": {
+            "tool_native": { "type": "integer", "description": "clippy 原生 lint 诊断数" },
+            "tool_custom": { "type": "integer", "description": "fork 自定义 lint 诊断数" },
+            "llm": { "type": "integer", "description": "LLM 检测出的诊断数" }
+          }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["level", "code", "message", "file", "line"],
+        "properties": {
+          "level": {
+            "type": "string",
+            "enum": ["error", "warning", "note"],
+            "description": "诊断级别"
+          },
+          "code": {
+            "type": "string",
+            "description": "lint 代码，如 clippy::collapsible_if"
+          },
+          "guideline_code": {
+            "type": "string",
+            "description": "对应的规范编号，如 G.NAM.01"
+          },
+          "source": {
+            "type": "string",
+            "enum": ["tool_native", "tool_custom", "llm"],
+            "description": "诊断来源：tool_native=clippy原生lint / tool_custom=fork自定义lint / llm=大模型"
+          },
+          "message": {
+            "type": "string",
+            "description": "诊断消息"
+          },
+          "file": {
+            "type": "string",
+            "description": "文件相对路径"
+          },
+          "line": {
+            "type": "integer",
+            "description": "行号"
+          },
+          "column": {
+            "type": "integer",
+            "description": "列号"
+          },
+          "rendered": {
+            "type": "string",
+            "description": "格式化的完整诊断输出（主要用于 tool 来源）"
+          },
+          "suggestions": {
+            "type": "array",
+            "description": "修复建议",
+            "items": {
+              "type": "object",
+              "properties": {
+                "file": { "type": "string" },
+                "line_start": { "type": "integer" },
+                "line_end": { "type": "integer" },
+                "column_start": { "type": "integer" },
+                "column_end": { "type": "integer" },
+                "replacement": { "type": "string" },
+                "applicability": {
+                  "type": "string",
+                  "enum": ["MachineApplicable", "MaybeIncorrect", "HasPlaceholders", "Unspecified"]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

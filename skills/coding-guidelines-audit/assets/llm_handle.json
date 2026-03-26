@@ -1,0 +1,166 @@
+{
+  "version": "1.0",
+  "description": "LLM 辅助检测路由表 - 工具无法覆盖的规则",
+  "rules": [
+    {
+      "guideline_code": "G.CMT.02",
+      "title": "文件头注释应包含版权说明",
+      "level": "suggestion",
+      "difficulty": "medium",
+      "handler": "llm",
+      "ref_file": "refs/G.CMT.02.md",
+      "check_strategy": "file_header_scan",
+      "check_description": "检查每个 .rs 文件的头部是否包含版权声明注释，格式应统一",
+      "audit_focus": "文件头部是否包含版权声明注释",
+      "pre_filter": {
+        "type": "head",
+        "lines": 10,
+        "description": "提取每个 .rs 文件的前 10 行"
+      },
+      "batch_size": 20
+    },
+    {
+      "guideline_code": "G.FMT.01",
+      "title": "extern 外部函数应显式指定 ABI 标识",
+      "level": "suggestion",
+      "difficulty": "low",
+      "handler": "llm",
+      "ref_file": "refs/G.FMT.01.md",
+      "check_strategy": "pattern_review",
+      "check_description": "检查 extern 函数声明是否显式指定了 ABI，如 extern \"C\" fn",
+      "audit_focus": "extern 函数是否显式指定 ABI",
+      "pre_filter": {
+        "type": "grep",
+        "patterns": ["extern\\s+fn", "extern\\s*\\{"],
+        "context_lines": 5,
+        "description": "搜索包含 extern fn 或 extern { 的文件"
+      },
+      "batch_size": 10
+    },
+    {
+      "guideline_code": "G.TYP.BOL.03",
+      "title": "&& 和 || 操作符的右侧操作中不应包含副作用",
+      "level": "suggestion",
+      "difficulty": "high",
+      "handler": "llm",
+      "ref_file": "refs/G.TYP.BOL.03.md",
+      "check_strategy": "semantic_analysis",
+      "check_description": "分析 && 和 || 右侧表达式是否包含函数调用、赋值等副作用操作",
+      "audit_focus": "&& 和 || 右侧是否有副作用",
+      "pre_filter": {
+        "type": "grep",
+        "patterns": ["&&", "\\|\\|"],
+        "context_lines": 10,
+        "description": "搜索包含 && 或 || 操作符的文件"
+      },
+      "batch_size": 8
+    },
+    {
+      "guideline_code": "G.TYP.SCT.01",
+      "title": "外部使用的自定义类型宜实现常见 trait",
+      "level": "suggestion",
+      "difficulty": "medium",
+      "handler": "llm",
+      "ref_file": "refs/G.TYP.SCT.01.md",
+      "check_strategy": "trait_completeness",
+      "check_description": "检查 pub struct/enum 是否实现了 Debug, Clone, PartialEq 等常见 trait",
+      "audit_focus": "pub struct/enum 是否实现常见 trait",
+      "pre_filter": {
+        "type": "grep",
+        "patterns": ["pub\\s+struct\\s+", "pub\\s+enum\\s+"],
+        "context_lines": 20,
+        "description": "搜索包含 pub struct 或 pub enum 定义的文件"
+      },
+      "batch_size": 8
+    },
+    {
+      "guideline_code": "G.CTF.01",
+      "title": "宜优先使用模式匹配而非判断后再取值",
+      "level": "suggestion",
+      "difficulty": "high",
+      "handler": "llm",
+      "ref_file": "refs/G.CTF.01.md",
+      "check_strategy": "pattern_review",
+      "check_description": "识别 is_some/unwrap、is_empty/index 等可用 if let/match 替代的模式",
+      "audit_focus": "是否可用模式匹配替代判断+取值",
+      "pre_filter": {
+        "type": "grep",
+        "patterns": ["is_some\\(\\)", "is_none\\(\\)", "\\.unwrap\\(\\)", "is_empty\\(\\)"],
+        "context_lines": 10,
+        "description": "搜索包含 is_some/is_none/unwrap/is_empty 调用的文件"
+      },
+      "batch_size": 8
+    },
+    {
+      "guideline_code": "G.CTF.02",
+      "title": "Match Guard 中不应使用带副作用的条件表达式",
+      "level": "suggestion",
+      "difficulty": "high",
+      "handler": "llm",
+      "ref_file": "refs/G.CTF.02.md",
+      "check_strategy": "semantic_analysis",
+      "check_description": "检查 match 分支 guard 中是否包含修改状态、IO 操作等副作用",
+      "audit_focus": "match guard 中是否有副作用",
+      "pre_filter": {
+        "type": "grep",
+        "patterns": ["match\\s+"],
+        "context_lines": 30,
+        "description": "搜索包含 match 表达式的文件，提取完整 match 块"
+      },
+      "batch_size": 5
+    },
+    {
+      "guideline_code": "G.MAC.DCL.01",
+      "title": "编写宏匹配规则时，宜遵从匹配范围从小至大的顺序",
+      "level": "suggestion",
+      "difficulty": "high",
+      "handler": "llm",
+      "ref_file": "refs/G.MAC.DCL.01.md",
+      "check_strategy": "macro_analysis",
+      "check_description": "分析 macro_rules! 中多个匹配分支的片段说明符范围是否从小到大排列",
+      "audit_focus": "macro_rules! 匹配分支顺序是否从小到大",
+      "pre_filter": {
+        "type": "grep",
+        "patterns": ["macro_rules!"],
+        "context_lines": 50,
+        "description": "搜索包含 macro_rules! 定义的文件，提取完整宏定义"
+      },
+      "batch_size": 5
+    },
+    {
+      "guideline_code": "G.MAC.PRO.011",
+      "title": "不应通过过程宏将 unsafe 代码包装为 safe 代码",
+      "level": "requirement",
+      "difficulty": "medium",
+      "handler": "llm",
+      "ref_file": "refs/G.MAC.PRO.011.md",
+      "check_strategy": "unsafe_wrapper_detection",
+      "check_description": "检查过程宏生成的代码中是否将 unsafe 块包装在 safe 函数内而未标记 unsafe",
+      "audit_focus": "过程宏是否将 unsafe 包装为 safe",
+      "pre_filter": {
+        "type": "crate_type",
+        "types": ["proc-macro"],
+        "description": "仅扫描 proc-macro 类型的 crate 源码"
+      },
+      "batch_size": 5
+    },
+    {
+      "guideline_code": "G.SAF.MEM.04",
+      "title": "内存中的敏感信息使用完毕后应立即清零",
+      "level": "requirement",
+      "difficulty": "high",
+      "handler": "llm",
+      "ref_file": "refs/G.SAF.MEM.04.md",
+      "check_strategy": "sensitive_data_review",
+      "check_description": "识别密码、密钥等敏感数据变量，检查是否在 Drop 或使用后通过 write_volatile 等方式清零",
+      "audit_focus": "敏感信息是否使用后清零",
+      "pre_filter": {
+        "type": "grep",
+        "patterns": ["password", "secret", "key", "token", "credential", "private_key", "passphrase"],
+        "context_lines": 20,
+        "description": "搜索包含敏感信息相关变量名的文件"
+      },
+      "batch_size": 5
+    }
+  ]
+}
