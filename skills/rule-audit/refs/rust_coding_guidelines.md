@@ -1,1 +1,0 @@
-../../full-audit/refs/rust_coding_guidelines.md

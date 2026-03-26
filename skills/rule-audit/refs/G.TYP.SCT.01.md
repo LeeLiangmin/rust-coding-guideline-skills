@@ -1,1 +1,0 @@
-../../full-audit/refs/G.TYP.SCT.01.md

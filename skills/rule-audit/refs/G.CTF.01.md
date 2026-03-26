@@ -1,1 +1,0 @@
-../../full-audit/refs/G.CTF.01.md
